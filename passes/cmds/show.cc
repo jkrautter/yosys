@@ -21,6 +21,7 @@
 #include "kernel/celltypes.h"
 #include "kernel/log.h"
 #include <string.h>
+#include <iomanip>
 
 #ifndef _WIN32
 #  include <dirent.h>
@@ -63,6 +64,7 @@ struct ShowWorker
 	bool enumerateIds;
 	bool abbreviateIds;
 	bool notitle;
+	bool plain;
 	int page_counter;
 
 	const std::vector<std::pair<std::string, RTLIL::Selection>> &color_selections;
@@ -243,12 +245,20 @@ struct ShowWorker
 				std::string repinfo = rep > 1 ? stringf("%dx ", rep) : "";
 				if (driver) {
 					label_string += stringf("<s%d> %d:%d - %s%d:%d |", i, pos, pos-c.width+1, repinfo.c_str(), c.offset+c.width-1, c.offset);
-					net_conn_map[net].in.insert(stringf("x%d:s%d", idx, i));
+					if (!plain) {
+						net_conn_map[net].in.insert(stringf("x%d:s%d", idx, i));
+					} else {
+						net_conn_map[net].in.insert(stringf("x%d", idx));
+					}
 					net_conn_map[net].bits = rep*c.width;
 					net_conn_map[net].color = nextColor(c, net_conn_map[net].color);
 				} else {
 					label_string += stringf("<s%d> %s%d:%d - %d:%d |", i, repinfo.c_str(), c.offset+c.width-1, c.offset, pos, pos-rep*c.width+1);
-					net_conn_map[net].out.insert(stringf("x%d:s%d", idx, i));
+					if (!plain) {
+						net_conn_map[net].out.insert(stringf("x%d:s%d", idx, i));
+					} else {
+						net_conn_map[net].out.insert(stringf("x%d", idx));
+					}
 					net_conn_map[net].bits = rep*c.width;
 					net_conn_map[net].color = nextColor(c, net_conn_map[net].color);
 				}
@@ -259,10 +269,17 @@ struct ShowWorker
 			code += stringf("x%d [ shape=record, style=rounded, label=\"%s\" ];\n", idx, label_string.c_str());
 			if (!port.empty()) {
 				currentColor = xorshift32(currentColor);
-				if (driver)
-					code += stringf("%s:e -> x%d:w [arrowhead=odiamond, arrowtail=odiamond, dir=both, %s, %s];\n", port.c_str(), idx, nextColor(sig).c_str(), widthLabel(sig.size()).c_str());
-				else
-					code += stringf("x%d:e -> %s:w [arrowhead=odiamond, arrowtail=odiamond, dir=both, %s, %s];\n", idx, port.c_str(), nextColor(sig).c_str(), widthLabel(sig.size()).c_str());
+				if (!plain) {
+					if (driver)
+						code += stringf("%s:e -> x%d:w [arrowhead=odiamond, arrowtail=odiamond, dir=both, %s, %s];\n", port.c_str(), idx, nextColor(sig).c_str(), widthLabel(sig.size()).c_str());
+					else
+						code += stringf("x%d:e -> %s:w [arrowhead=odiamond, arrowtail=odiamond, dir=both, %s, %s];\n", idx, port.c_str(), nextColor(sig).c_str(), widthLabel(sig.size()).c_str());
+				} else {
+					if (driver)
+						code += stringf("%s -> x%d [arrowhead=odiamond, arrowtail=odiamond, dir=both, %s, %s];\n", port.c_str(), idx, nextColor(sig).c_str(), widthLabel(sig.size()).c_str());
+					else
+						code += stringf("x%d -> %s [arrowhead=odiamond, arrowtail=odiamond, dir=both, %s, %s];\n", idx, port.c_str(), nextColor(sig).c_str(), widthLabel(sig.size()).c_str());
+				}
 			}
 			if (node != NULL)
 				*node = stringf("x%d", idx);
@@ -391,29 +408,47 @@ struct ShowWorker
 
 			std::sort(in_ports.begin(), in_ports.end(), RTLIL::sort_by_id_str());
 			std::sort(out_ports.begin(), out_ports.end(), RTLIL::sort_by_id_str());
+			
+			std::string label_string;
+			
+			if (!plain) {
 
-			std::string label_string = "{{";
-
-			for (auto &p : in_ports)
-				label_string += stringf("<p%d> %s%s|", id2num(p), escape(p.str()),
-						genSignedLabels && it.second->hasParam(p.str() + "_SIGNED") &&
-						it.second->getParam(p.str() + "_SIGNED").as_bool() ? "*" : "");
-			if (label_string[label_string.size()-1] == '|')
-				label_string = label_string.substr(0, label_string.size()-1);
-
-			label_string += stringf("}|%s\\n%s|{", findLabel(it.first.str()), escape(it.second->type.str()));
-
-			for (auto &p : out_ports)
-				label_string += stringf("<p%d> %s|", id2num(p), escape(p.str()));
-			if (label_string[label_string.size()-1] == '|')
-				label_string = label_string.substr(0, label_string.size()-1);
-
-			label_string += "}}";
+				 label_string = "{{";
+	
+				for (auto &p : in_ports)
+					label_string += stringf("<p%d> %s%s|", id2num(p), escape(p.str()),
+							genSignedLabels && it.second->hasParam(p.str() + "_SIGNED") &&
+							it.second->getParam(p.str() + "_SIGNED").as_bool() ? "*" : "");
+				if (label_string[label_string.size()-1] == '|')
+					label_string = label_string.substr(0, label_string.size()-1);
+	
+				std::string lutmask = "";
+				if (it.second->type == "\\SB_LUT4") {
+					std::stringstream ss;
+					ss << std::setfill('0') << std::setw(4) << std::hex << it.second->getParam("\\LUT_INIT").as_int();
+					lutmask = "\\nLUT_INIT: 0x" + ss.str();
+				}
+				label_string += stringf("}|%s\\n%s%s|{", findLabel(it.first.str()), escape(it.second->type.str()), lutmask.c_str());
+	
+				for (auto &p : out_ports)
+					label_string += stringf("<p%d> %s|", id2num(p), escape(p.str()));
+				if (label_string[label_string.size()-1] == '|')
+					label_string = label_string.substr(0, label_string.size()-1);
+	
+				label_string += "}}";
+			} else {
+				label_string = escape(it.second->type.str());
+			}
 
 			std::string code;
 			for (auto &conn : it.second->connections()) {
-				code += gen_portbox(stringf("c%d:p%d", id2num(it.first), id2num(conn.first)),
+				if (!plain) {
+					code += gen_portbox(stringf("c%d:p%d", id2num(it.first), id2num(conn.first)),
 						conn.second, ct.cell_output(it.second->type, conn.first));
+				} else {
+					code += gen_portbox(stringf("c%d", id2num(it.first)), 
+											conn.second, ct.cell_output(it.second->type, conn.first));
+				}
 			}
 
 #ifdef CLUSTER_CELLS_AND_PORTBOXES
@@ -421,9 +456,14 @@ struct ShowWorker
 				fprintf(f, "subgraph cluster_c%d {\nc%d [ shape=record, label=\"%s\"%s ];\n%s}\n",
 						id2num(it.first), id2num(it.first), label_string.c_str(), findColor(it.first), code.c_str());
 			else
-#endif
+#endif		
+			if (!plain) {
 				fprintf(f, "c%d [ shape=record, label=\"%s\"%s ];\n%s",
 						id2num(it.first), label_string.c_str(), findColor(it.first.str()), code.c_str());
+			} else {
+				fprintf(f, "c%d [ shape=box, label=\"%s\"%s ];\n%s",
+										id2num(it.first), label_string.c_str(), findColor(it.first.str()), code.c_str());
+			}
 		}
 
 		for (auto &it : module->processes)
@@ -486,7 +526,11 @@ struct ShowWorker
 
 			if (left_node[0] == 'x' && right_node[0] == 'x') {
 				currentColor = xorshift32(currentColor);
-				fprintf(f, "%s:e -> %s:w [arrowhead=odiamond, arrowtail=odiamond, dir=both, %s, %s];\n", left_node.c_str(), right_node.c_str(), nextColor(conn).c_str(), widthLabel(conn.first.size()).c_str());
+				if (!plain) {
+					fprintf(f, "%s:e -> %s:w [arrowhead=odiamond, arrowtail=odiamond, dir=both, %s, %s];\n", left_node.c_str(), right_node.c_str(), nextColor(conn).c_str(), widthLabel(conn.first.size()).c_str());
+				} else {
+					fprintf(f, "%s -> %s [arrowhead=odiamond, arrowtail=odiamond, dir=both, %s, %s];\n", left_node.c_str(), right_node.c_str(), nextColor(conn).c_str(), widthLabel(conn.first.size()).c_str());
+				}
 			} else {
 				net_conn_map[right_node].bits = conn.first.size();
 				net_conn_map[right_node].color = nextColor(conn, net_conn_map[right_node].color);
@@ -497,8 +541,13 @@ struct ShowWorker
 				} else if (right_node[0] == 'x') {
 					net_conn_map[left_node].out.insert(right_node);
 				} else {
-					net_conn_map[right_node].in.insert(stringf("x%d:e", single_idx_count));
-					net_conn_map[left_node].out.insert(stringf("x%d:w", single_idx_count));
+					if (!plain) {
+						net_conn_map[right_node].in.insert(stringf("x%d:e", single_idx_count));
+						net_conn_map[left_node].out.insert(stringf("x%d:w", single_idx_count));
+					} else {
+						net_conn_map[right_node].in.insert(stringf("x%d", single_idx_count));
+						net_conn_map[left_node].out.insert(stringf("x%d", single_idx_count));
+					}
 					fprintf(f, "x%d [shape=box, style=rounded, label=\"BUF\"];\n", single_idx_count++);
 				}
 			}
@@ -512,8 +561,13 @@ struct ShowWorker
 					it.second.out.erase(*it.second.in.begin());
 				if (it.second.in.size() == 1 && it.second.out.size() == 1) {
 					std::string from = *it.second.in.begin(), to = *it.second.out.begin();
-					if (from != to || from.substr(0, 1) != "p")
-						fprintf(f, "%s:e -> %s:w [%s, %s];\n", from.c_str(), to.c_str(), nextColor(it.second.color).c_str(), widthLabel(it.second.bits).c_str());
+					if (from != to || from.substr(0, 1) != "p") {
+						if (!plain) {
+							fprintf(f, "%s:e -> %s:w [%s, %s];\n", from.c_str(), to.c_str(), nextColor(it.second.color).c_str(), widthLabel(it.second.bits).c_str());
+						} else {
+							fprintf(f, "%s -> %s [%s, %s];\n", from.c_str(), to.c_str(), nextColor(it.second.color).c_str(), widthLabel(it.second.bits).c_str());
+						}
+					}
 					continue;
 				}
 				if (it.second.in.size() == 0 || it.second.out.size() == 0)
@@ -521,22 +575,29 @@ struct ShowWorker
 				else
 					fprintf(f, "%s [ shape=point ];\n", it.first.c_str());
 			}
-			for (auto &it2 : it.second.in)
-				fprintf(f, "%s:e -> %s:w [%s, %s];\n", it2.c_str(), it.first.c_str(), nextColor(it.second.color).c_str(), widthLabel(it.second.bits).c_str());
-			for (auto &it2 : it.second.out)
-				fprintf(f, "%s:e -> %s:w [%s, %s];\n", it.first.c_str(), it2.c_str(), nextColor(it.second.color).c_str(), widthLabel(it.second.bits).c_str());
+			if (!plain) {
+				for (auto &it2 : it.second.in)
+					fprintf(f, "%s:e -> %s:w [%s, %s];\n", it2.c_str(), it.first.c_str(), nextColor(it.second.color).c_str(), widthLabel(it.second.bits).c_str());
+				for (auto &it2 : it.second.out)
+					fprintf(f, "%s:e -> %s:w [%s, %s];\n", it.first.c_str(), it2.c_str(), nextColor(it.second.color).c_str(), widthLabel(it.second.bits).c_str());
+			} else {
+				for (auto &it2 : it.second.in)
+					fprintf(f, "%s -> %s [%s, %s];\n", it2.c_str(), it.first.c_str(), nextColor(it.second.color).c_str(), widthLabel(it.second.bits).c_str());
+				for (auto &it2 : it.second.out)
+					fprintf(f, "%s -> %s [%s, %s];\n", it.first.c_str(), it2.c_str(), nextColor(it.second.color).c_str(), widthLabel(it.second.bits).c_str());
+			}
 		}
 
 		fprintf(f, "}\n");
 	}
 
 	ShowWorker(FILE *f, RTLIL::Design *design, std::vector<RTLIL::Design*> &libs, uint32_t colorSeed, bool genWidthLabels,
-			bool genSignedLabels, bool stretchIO, bool enumerateIds, bool abbreviateIds, bool notitle,
+			bool genSignedLabels, bool stretchIO, bool enumerateIds, bool abbreviateIds, bool notitle, bool plain,
 			const std::vector<std::pair<std::string, RTLIL::Selection>> &color_selections,
 			const std::vector<std::pair<std::string, RTLIL::Selection>> &label_selections, RTLIL::IdString colorattr) :
 			f(f), design(design), currentColor(colorSeed), genWidthLabels(genWidthLabels),
 			genSignedLabels(genSignedLabels), stretchIO(stretchIO), enumerateIds(enumerateIds), abbreviateIds(abbreviateIds),
-			notitle(notitle), color_selections(color_selections), label_selections(label_selections), colorattr(colorattr)
+			notitle(notitle), plain(plain), color_selections(color_selections), label_selections(label_selections), colorattr(colorattr)
 	{
 		ct.setup_internals();
 		ct.setup_internals_mem();
@@ -680,6 +741,7 @@ struct ShowPass : public Pass {
 		bool flag_stretch = false;
 		bool flag_pause = false;
 		bool flag_enum = false;
+		bool flag_plain = false;
 		bool flag_abbreviate = true;
 		bool flag_notitle = false;
 		bool custom_prefix = false;
@@ -764,6 +826,10 @@ struct ShowPass : public Pass {
 				flag_notitle = true;
 				continue;
 			}
+			if (arg == "-plain") {
+				flag_plain = true;
+				continue;
+			}
 			break;
 		}
 		extra_args(args, argidx, design);
@@ -808,7 +874,7 @@ struct ShowPass : public Pass {
 				delete lib;
 			log_cmd_error("Can't open dot file `%s' for writing.\n", dot_file.c_str());
 		}
-		ShowWorker worker(f, design, libs, colorSeed, flag_width, flag_signed, flag_stretch, flag_enum, flag_abbreviate, flag_notitle, color_selections, label_selections, colorattr);
+		ShowWorker worker(f, design, libs, colorSeed, flag_width, flag_signed, flag_stretch, flag_enum, flag_abbreviate, flag_notitle, flag_plain, color_selections, label_selections, colorattr);
 		fclose(f);
 
 		for (auto lib : libs)
