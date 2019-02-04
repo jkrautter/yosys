@@ -53,6 +53,8 @@ struct CellTypes
 		setup_internals_mem();
 		setup_stdcells();
 		setup_stdcells_mem();
+		setup_ice40_stdcells();
+		setup_ice40_stdcells_mem();
 	}
 
 	void setup_type(RTLIL::IdString type, const pool<RTLIL::IdString> &inputs, const pool<RTLIL::IdString> &outputs, bool is_evaluable = false)
@@ -78,6 +80,42 @@ struct CellTypes
 	{
 		for (auto module : design->modules())
 			setup_module(module);
+	}
+
+	void setup_ice40_stdcells()
+	{
+		IdString I0 = "\\I0", I1 = "\\I1", I2 = "\\I2", I3 = "\\I3", CI = "\\CI";
+		IdString CO = "\\CO", O = "\\O";
+
+		setup_type("\\SB_LUT4", {I0, I1, I2, I3}, {O});
+		setup_type("\\SB_CARRY", {I0, I1, CI}, {CO});
+	}
+
+	void setup_ice40_stdcells_mem()
+	{
+		IdString D = "\\D", C = "\\C", E = "\\E", R = "\\R", S = "\\S";
+		IdString Q = "\\Q";
+
+		setup_type("\\SB_DFF", {D, C}, {Q});
+		setup_type("\\SB_DFFE", {E, D, C}, {Q});
+		setup_type("\\SB_DFFSR", {R, D, C}, {Q});
+		setup_type("\\SB_DFFR", {R, D, C}, {Q});
+		setup_type("\\SB_DFFSS", {S, D, C}, {Q});
+		setup_type("\\SB_DFFS", {S, D, C}, {Q});
+		setup_type("\\SB_DFFESR", {R, E, D, C}, {Q});
+		setup_type("\\SB_DFFER", {R, E, D, C}, {Q});
+		setup_type("\\SB_DFFESS", {S, E, D, C}, {Q});
+		setup_type("\\SB_DFFES", {S, E, D, C}, {Q});
+		setup_type("\\SB_DFFN", {D, C}, {Q});
+		setup_type("\\SB_DFFNE", {E, D, C}, {Q});
+		setup_type("\\SB_DFFNSR", {R, D, C}, {Q});
+		setup_type("\\SB_DFFNR", {R, D, C}, {Q});
+		setup_type("\\SB_DFFNSS", {S, D, C}, {Q});
+		setup_type("\\SB_DFFNS", {S, D, C}, {Q});
+		setup_type("\\SB_DFFNESR", {R, E, D, C}, {Q});
+		setup_type("\\SB_DFFNER", {R, E, D, C}, {Q});
+		setup_type("\\SB_DFFNESS", {S, E, D, C}, {Q});
+		setup_type("\\SB_DFFNES", {S, E, D, C}, {Q});
 	}
 
 	void setup_internals()

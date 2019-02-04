@@ -603,6 +603,8 @@ struct ShowWorker
 		ct.setup_internals_mem();
 		ct.setup_stdcells();
 		ct.setup_stdcells_mem();
+		ct.setup_ice40_stdcells();
+		ct.setup_ice40_stdcells_mem();
 		ct.setup_design(design);
 
 		for (auto lib : libs)
