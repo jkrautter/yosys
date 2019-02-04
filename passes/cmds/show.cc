@@ -447,7 +447,7 @@ struct ShowWorker
 						conn.second, ct.cell_output(it.second->type, conn.first));
 				} else {
 					code += gen_portbox(stringf("c%d", id2num(it.first)), 
-											conn.second, ct.cell_output(it.second->type, conn.first));
+						conn.second, ct.cell_output(it.second->type, conn.first));
 				}
 			}
 
@@ -462,7 +462,7 @@ struct ShowWorker
 						id2num(it.first), label_string.c_str(), findColor(it.first.str()), code.c_str());
 			} else {
 				fprintf(f, "c%d [ shape=box, label=\"%s\"%s ];\n%s",
-										id2num(it.first), label_string.c_str(), findColor(it.first.str()), code.c_str());
+						id2num(it.first), label_string.c_str(), findColor(it.first.str()), code.c_str());
 			}
 		}
 

@@ -206,7 +206,8 @@ struct TechmapWorker
 			if (it.second->port_id > 0)
 				positional_ports[stringf("$%d", it.second->port_id)] = it.first;
 			std::string w_name = it.second->name.str();
-			apply_prefix(cell->name.str(), w_name);
+			std::string prefix = "\\" + cell->name.str();
+			apply_prefix(prefix, w_name);
 			RTLIL::Wire *w = module->addWire(w_name, it.second);
 			w->port_input = false;
 			w->port_output = false;
@@ -253,18 +254,21 @@ struct TechmapWorker
 			if (w->port_output && !w->port_input) {
 				c.first = it.second;
 				c.second = RTLIL::SigSpec(w);
-				apply_prefix(cell->name.str(), c.second, module);
+				std::string prefix = "\\" + cell->name.str();
+				apply_prefix(prefix, c.second, module);
 				extra_connect.first = c.second;
 				extra_connect.second = c.first;
 			} else if (!w->port_output && w->port_input) {
 				c.first = RTLIL::SigSpec(w);
 				c.second = it.second;
-				apply_prefix(cell->name.str(), c.first, module);
+				std::string prefix = "\\" + cell->name.str();
+				apply_prefix(prefix, c.first, module);
 				extra_connect.first = c.first;
 				extra_connect.second = c.second;
 			} else {
 				SigSpec sig_tpl = w, sig_tpl_pf = w, sig_mod = it.second;
-				apply_prefix(cell->name.str(), sig_tpl_pf, module);
+				std::string prefix = "\\" + cell->name.str();
+				apply_prefix(prefix, sig_tpl_pf, module);
 				for (int i = 0; i < GetSize(sig_tpl) && i < GetSize(sig_mod); i++) {
 					if (tpl_written_bits.count(tpl_sigmap(sig_tpl[i]))) {
 						c.first.append(sig_mod[i]);
@@ -331,8 +335,10 @@ struct TechmapWorker
 
 			if (techmap_replace_cell)
 				c_name = orig_cell_name;
-			else
-				apply_prefix(cell->name.str(), c_name);
+			else {
+				std::string prefix = "\\" + cell->name.str();
+				apply_prefix(prefix, c_name);
+			}
 
 			RTLIL::Cell *c = module->addCell(c_name, it.second);
 			design->select(module, c);
@@ -341,7 +347,8 @@ struct TechmapWorker
 				c->type = c->type.substr(1);
 
 			for (auto &it2 : c->connections_) {
-				apply_prefix(cell->name.str(), it2.second, module);
+				std::string prefix = "\\" + cell->name.str();
+				apply_prefix(prefix, it2.second, module);
 				port_signal_map.apply(it2.second);
 			}
 
@@ -353,7 +360,8 @@ struct TechmapWorker
 
 			if (c->type == "$mem") {
 				string memid = c->getParam("\\MEMID").decode_string();
-				apply_prefix(cell->name.str(), memid);
+				std::string prefix = "\\" + cell->name.str();
+				apply_prefix(prefix, memid);
 				c->setParam("\\MEMID", Const(memid));
 			}
 
@@ -368,8 +376,9 @@ struct TechmapWorker
 
 		for (auto &it : tpl->connections()) {
 			RTLIL::SigSig c = it;
-			apply_prefix(cell->name.str(), c.first, module);
-			apply_prefix(cell->name.str(), c.second, module);
+			std::string prefix = "\\" + cell->name.str();
+			apply_prefix(prefix, c.first, module);
+			apply_prefix(prefix, c.second, module);
 			port_signal_map.apply(c.first);
 			port_signal_map.apply(c.second);
 			module->connect(c);
