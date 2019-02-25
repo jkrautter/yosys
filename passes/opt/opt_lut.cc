@@ -36,7 +36,7 @@ struct OptLutWorker
 	dict<RTLIL::Cell*, pool<RTLIL::Cell*>> luts_dlogics;
 	dict<RTLIL::Cell*, pool<int>> luts_dlogic_inputs;
 
-	int combined_count = 0;
+	int eliminated_count = 0, combined_count = 0;
 
 	bool evaluate_lut(RTLIL::Cell *lut, dict<SigBit, bool> inputs)
 	{
@@ -58,7 +58,7 @@ struct OptLutWorker
 			}
 		}
 
-		return lut_table.extract(lut_index).as_int();
+		return lut_table.extract(lut_index).as_bool();
 	}
 
 	void show_stats_by_arity()
@@ -93,7 +93,7 @@ struct OptLutWorker
 		}
 	}
 
-	OptLutWorker(dict<IdString, dict<int, IdString>> &dlogic, RTLIL::Module *module) :
+	OptLutWorker(dict<IdString, dict<int, IdString>> &dlogic, RTLIL::Module *module, int limit) :
 		dlogic(dlogic), module(module), index(module), sigmap(module)
 	{
 		log("Discovering LUTs.\n");
@@ -133,7 +133,7 @@ struct OptLutWorker
 				// Second, make sure that the connection to dedicated logic is legal. If it is not legal,
 				// it means one of the two things:
 				//   * The connection is spurious. I.e. this is dedicated logic that will be packed
-				//     with some other LUT, and it just happens to be conected to this LUT as well.
+				//     with some other LUT, and it just happens to be connected to this LUT as well.
 				//   * The connection is illegal.
 				// In either of these cases, we don't need to concern ourselves with preserving the connection
 				// between this LUT and this dedicated logic cell.
@@ -188,10 +188,116 @@ struct OptLutWorker
 		show_stats_by_arity();
 
 		log("\n");
-		log("Combining LUTs.\n");
+		log("Eliminating LUTs.\n");
 		pool<RTLIL::Cell*> worklist = luts;
 		while (worklist.size())
 		{
+			if (limit == 0)
+			{
+				log("Limit reached.\n");
+				break;
+			}
+
+			auto lut = worklist.pop();
+			SigSpec lut_input = sigmap(lut->getPort("\\A"));
+			pool<int> &lut_dlogic_inputs = luts_dlogic_inputs[lut];
+
+			vector<SigBit> lut_inputs;
+			for (auto &bit : lut_input)
+			{
+				if (bit.wire)
+					lut_inputs.push_back(sigmap(bit));
+			}
+
+			bool const0_match = true;
+			bool const1_match = true;
+			vector<bool> input_matches;
+			for (size_t i = 0; i < lut_inputs.size(); i++)
+				input_matches.push_back(true);
+
+			for (int eval = 0; eval < 1 << lut_inputs.size(); eval++)
+			{
+				dict<SigBit, bool> eval_inputs;
+				for (size_t i = 0; i < lut_inputs.size(); i++)
+					eval_inputs[lut_inputs[i]] = (eval >> i) & 1;
+				bool value = evaluate_lut(lut, eval_inputs);
+				if (value != 0)
+					const0_match = false;
+				if (value != 1)
+					const1_match = false;
+				for (size_t i = 0; i < lut_inputs.size(); i++)
+				{
+					if (value != eval_inputs[lut_inputs[i]])
+						input_matches[i] = false;
+				}
+			}
+
+			int input_match = -1;
+			for (size_t i = 0; i < lut_inputs.size(); i++)
+				if (input_matches[i])
+					input_match = i;
+
+			if (const0_match || const1_match || input_match != -1)
+			{
+				log("Found redundant cell %s.%s.\n", log_id(module), log_id(lut));
+
+				SigBit value;
+				if (const0_match)
+				{
+					log("  Cell evaluates constant 0.\n");
+					value = State::S0;
+				}
+				if (const1_match)
+				{
+					log("  Cell evaluates constant 1.\n");
+					value = State::S1;
+				}
+				if (input_match != -1) {
+					log("  Cell evaluates signal %s.\n", log_signal(lut_inputs[input_match]));
+					value = lut_inputs[input_match];
+				}
+
+				if (lut_dlogic_inputs.size())
+				{
+					log("  Not eliminating cell (connected to dedicated logic).\n");
+				}
+				else
+				{
+					SigSpec lut_output = lut->getPort("\\Y");
+					for (auto &port : index.query_ports(lut_output))
+					{
+						if (port.cell != lut && luts.count(port.cell))
+							worklist.insert(port.cell);
+					}
+
+					module->connect(lut_output, value);
+					sigmap.add(lut_output, value);
+
+					module->remove(lut);
+					luts.erase(lut);
+					luts_arity.erase(lut);
+					luts_dlogics.erase(lut);
+					luts_dlogic_inputs.erase(lut);
+
+					eliminated_count++;
+					if (limit > 0)
+						limit--;
+				}
+			}
+		}
+		show_stats_by_arity();
+
+		log("\n");
+		log("Combining LUTs.\n");
+		worklist = luts;
+		while (worklist.size())
+		{
+			if (limit == 0)
+			{
+				log("Limit reached.\n");
+				break;
+			}
+
 			auto lutA = worklist.pop();
 			SigSpec lutA_input = sigmap(lutA->getPort("\\A"));
 			SigSpec lutA_output = sigmap(lutA->getPort("\\Y")[0]);
@@ -218,6 +324,12 @@ struct OptLutWorker
 					pool<int> &lutB_dlogic_inputs = luts_dlogic_inputs[lutB];
 
 					log("Found %s.%s (cell A) feeding %s.%s (cell B).\n", log_id(module), log_id(lutA), log_id(module), log_id(lutB));
+
+					if (index.query_is_output(lutA->getPort("\\Y")))
+					{
+						log("  Not combining LUTs (cascade connection feeds module output).\n");
+						continue;
+					}
 
 					pool<SigBit> lutA_inputs;
 					pool<SigBit> lutB_inputs;
@@ -382,8 +494,9 @@ struct OptLutWorker
 						lutM_new_table[eval] = (RTLIL::State) evaluate_lut(lutB, eval_inputs);
 					}
 
-					log("  Old truth table: %s.\n", lutM->getParam("\\LUT").as_string().c_str());
-					log("  New truth table: %s.\n", lutM_new_table.as_string().c_str());
+					log("  Cell A truth table: %s.\n", lutA->getParam("\\LUT").as_string().c_str());
+					log("  Cell B truth table: %s.\n", lutB->getParam("\\LUT").as_string().c_str());
+					log("  Merged truth table: %s.\n", lutM_new_table.as_string().c_str());
 
 					lutM->setParam("\\LUT", lutM_new_table);
 					lutM->setPort("\\A", lutM_new_inputs);
@@ -398,6 +511,8 @@ struct OptLutWorker
 					worklist.erase(lutR);
 
 					combined_count++;
+					if (limit > 0)
+						limit--;
 				}
 			}
 		}
@@ -431,17 +546,22 @@ struct OptLutPass : public Pass {
 		log("        the case where both LUT and dedicated logic input are connected to\n");
 		log("        the same constant.\n");
 		log("\n");
+		log("    -limit N\n");
+		log("        only perform the first N combines, then stop. useful for debugging.\n");
+		log("\n");
 	}
 	void execute(std::vector<std::string> args, RTLIL::Design *design) YS_OVERRIDE
 	{
 		log_header(design, "Executing OPT_LUT pass (optimize LUTs).\n");
 
 		dict<IdString, dict<int, IdString>> dlogic;
+		int limit = -1;
 
 		size_t argidx;
 		for (argidx = 1; argidx < args.size(); argidx++)
 		{
-			if (args[argidx] == "-dlogic" && argidx+1 < args.size()) {
+			if (args[argidx] == "-dlogic" && argidx+1 < args.size())
+			{
 				std::vector<std::string> tokens;
 				split(tokens, args[++argidx], ':');
 				if (tokens.size() < 2)
@@ -458,20 +578,29 @@ struct OptLutPass : public Pass {
 				}
 				continue;
 			}
+			if (args[argidx] == "-limit" && argidx + 1 < args.size())
+			{
+				limit = atoi(args[++argidx].c_str());
+				continue;
+			}
 			break;
 		}
 		extra_args(args, argidx, design);
 
-		int total_count = 0;
+		int eliminated_count = 0, combined_count = 0;
 		for (auto module : design->selected_modules())
 		{
-			OptLutWorker worker(dlogic, module);
-			total_count += worker.combined_count;
+			OptLutWorker worker(dlogic, module, limit - eliminated_count - combined_count);
+			eliminated_count += worker.eliminated_count;
+			combined_count   += worker.combined_count;
 		}
-		if (total_count)
+		if (eliminated_count)
+			design->scratchpad_set_bool("opt.did_something", true);
+		if (combined_count)
 			design->scratchpad_set_bool("opt.did_something", true);
 		log("\n");
-		log("Combined %d LUTs.\n", total_count);
+		log("Eliminated %d LUTs.\n", eliminated_count);
+		log("Combined %d LUTs.\n", combined_count);
 	}
 } OptLutPass;
 

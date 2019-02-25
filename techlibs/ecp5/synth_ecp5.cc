@@ -189,7 +189,7 @@ struct SynthEcp5Pass : public ScriptPass
 		extra_args(args, argidx, design);
 
 		if (!design->full_selection())
-			log_cmd_error("This comannd only operates on fully selected designs!\n");
+			log_cmd_error("This command only operates on fully selected designs!\n");
 
 		log_header(design, "Executing SYNTH_ECP5 pass.\n");
 		log_push();
@@ -268,9 +268,9 @@ struct SynthEcp5Pass : public ScriptPass
 			}
 			run("techmap -map +/ecp5/latches_map.v");
 			if (nomux)
-				run("abc -lut 4");
+				run("abc -lut 4 -dress");
 			else
-				run("abc -lut 4:7");
+				run("abc -lut 4:7 -dress");
 			run("clean");
 		}
 
